@@ -1,46 +1,186 @@
-version: '3.8'
-
 services:
+
+  # ── Postgres 16 ────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:15-alpine
-    container_name: microsaas-db
+    image: postgres:16-alpine
+    container_name: resumeai-db
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: microsaas
-    ports:
-      - '5432:5432'
+      POSTGRES_USER: resumeai
+      POSTGRES_PASSWORD: resumeai
+      POSTGRES_DB: resumeai
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - resumeai_net
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      test: ["CMD-SHELL", "pg_isready -U resumeai -d resumeai"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
-  app:
+  # ── Redis 7 ────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: resumeai-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - resumeai_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ── Next.js web ────────────────────────────────────────────────────────────
+  web:
+    # WEB_IMAGE is set in production to the GHCR image (e.g. ghcr.io/org/resumeai-web:sha-abc).
+    # When unset (local dev), docker compose builds from the Dockerfile.
+    image: ${WEB_IMAGE:-resumeai-web:local}
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: microsaas-app
-    ports:
-      - '3000:3000'
+    container_name: resumeai-web
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/microsaas?schema=public
-      NEXTAUTH_URL: http://localhost:3000
+      DATABASE_URL: postgresql://resumeai:resumeai@postgres:5432/resumeai
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-https://resumeai-bot.ru}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      GITHUB_ID: ${GITHUB_ID}
-      GITHUB_SECRET: ${GITHUB_SECRET}
-      STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
-      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME}
-      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_ID: ${GITHUB_ID:-}
+      GITHUB_SECRET: ${GITHUB_SECRET:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-noreply@resumeai-bot.ru}
+      STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_ID_PRO: ${STRIPE_PRICE_ID_PRO:-}
+      STRIPE_PRICE_ID_UNLIMITED: ${STRIPE_PRICE_ID_UNLIMITED:-}
+      WORKER_URL: http://worker:8000
+      WORKER_SECRET: ${WORKER_SECRET}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://resumeai-bot.ru}
+      NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+      SENTRY_ORG: ${SENTRY_ORG:-}
+      SENTRY_PROJECT: ${SENTRY_PROJECT:-}
+      REDIS_URL: redis://redis:6379
+      # PMF / admin
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      CRON_SECRET: ${CRON_SECRET}
+      # P22 inbox
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      # P18 Telegram notifications
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - resumeai_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
+  # ── Python FastAPI worker ──────────────────────────────────────────────────
+  worker:
+    # WORKER_IMAGE is set in production to the GHCR image.
+    image: ${WORKER_IMAGE:-resumeai-worker:local}
+    build:
+      context: worker
+      dockerfile: Dockerfile
+    container_name: resumeai-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://resumeai:resumeai@postgres:5432/resumeai
+      WORKER_SECRET: ${WORKER_SECRET}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ADZUNA_APP_ID: ${ADZUNA_APP_ID:-}
+      ADZUNA_APP_KEY: ${ADZUNA_APP_KEY:-}
+      REDIS_URL: redis://redis:6379
+      # ENGLISH_JOB_SOURCES must be valid JSON if overridden, e.g.:
+      # ENGLISH_JOB_SOURCES: '["adzuna","themuse","arbeitnow","remoteok"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - resumeai_net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Telegram notifier ─────────────────────────────────────────────────────
+  notifier:
+    image: ${NOTIFIER_IMAGE:-resumeai-notifier:local}
+    build:
+      context: notifier
+      dockerfile: Dockerfile
+    container_name: resumeai-notifier
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://resumeai:resumeai@postgres:5432/resumeai
+      REDIS_URL: redis://redis:6379
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      APP_URL: ${NEXT_PUBLIC_APP_URL:-https://resumeai-bot.ru}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - resumeai_net
+
+  # ── Caddy reverse proxy ────────────────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: resumeai-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    depends_on:
+      - web
+      - worker
+    networks:
+      - resumeai_net
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  resumeai_net:
+    driver: bridge
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  caddy_logs:

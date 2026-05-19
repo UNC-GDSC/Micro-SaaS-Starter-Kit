@@ -5,7 +5,12 @@ import bcrypt from 'bcrypt'
 const API_KEY_PREFIX = 'sk_'
 const API_KEY_LENGTH = 32
 
-export async function generateApiKey(userId: string, name: string, expiresAt?: Date) {
+export async function generateApiKey(
+  userId: string,
+  name: string,
+  expiresAt?: Date,
+  scope?: string,
+) {
   const rawKey = `${API_KEY_PREFIX}${nanoid(API_KEY_LENGTH)}`
   const hashedKey = await bcrypt.hash(rawKey, 10)
 
@@ -15,6 +20,7 @@ export async function generateApiKey(userId: string, name: string, expiresAt?: D
       key: hashedKey,
       userId,
       expiresAt,
+      scope: scope ?? null,
     },
   })
 
@@ -26,16 +32,19 @@ export async function validateApiKey(rawKey: string): Promise<{
   valid: boolean
   userId?: string
   apiKeyId?: string
+  scope?: string | null
 }> {
   if (!rawKey.startsWith(API_KEY_PREFIX)) {
     return { valid: false }
   }
 
+  // Include non-expiring keys (expiresAt IS NULL) and not-yet-expired keys
   const apiKeys = await prisma.apiKey.findMany({
     where: {
-      expiresAt: {
-        gt: new Date(),
-      },
+      OR: [
+        { expiresAt: null },
+        { expiresAt: { gt: new Date() } },
+      ],
     },
   })
 
@@ -48,6 +57,44 @@ export async function validateApiKey(rawKey: string): Promise<{
         data: { lastUsed: new Date() },
       })
 
+      return { valid: true, userId: apiKey.userId, apiKeyId: apiKey.id, scope: apiKey.scope }
+    }
+  }
+
+  return { valid: false }
+}
+
+/**
+ * Validate an extension-scoped API key.
+ * Only compares against keys that have scope='extension', which is much faster
+ * than scanning all keys when the user has many general-purpose keys.
+ */
+export async function validateExtensionKey(rawKey: string): Promise<{
+  valid: boolean
+  userId?: string
+  apiKeyId?: string
+}> {
+  if (!rawKey.startsWith(API_KEY_PREFIX)) {
+    return { valid: false }
+  }
+
+  const apiKeys = await prisma.apiKey.findMany({
+    where: {
+      scope: 'extension',
+      OR: [
+        { expiresAt: null },
+        { expiresAt: { gt: new Date() } },
+      ],
+    },
+  })
+
+  for (const apiKey of apiKeys) {
+    const isValid = await bcrypt.compare(rawKey, apiKey.key)
+    if (isValid) {
+      await prisma.apiKey.update({
+        where: { id: apiKey.id },
+        data: { lastUsed: new Date() },
+      })
       return { valid: true, userId: apiKey.userId, apiKeyId: apiKey.id }
     }
   }
@@ -80,6 +127,7 @@ export async function getUserApiKeys(userId: string) {
     select: {
       id: true,
       name: true,
+      scope: true,
       lastUsed: true,
       createdAt: true,
       expiresAt: true,

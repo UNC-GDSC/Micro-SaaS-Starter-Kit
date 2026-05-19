@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test('homepage loads successfully', async ({ page }) => {
   await page.goto('/')
 
-  await expect(page).toHaveTitle(/Micro SaaS/)
+  await expect(page).toHaveTitle(/ResumeAI/)
 
   const heading = page.getByRole('heading', {
     name: /Launch Your SaaS/i,

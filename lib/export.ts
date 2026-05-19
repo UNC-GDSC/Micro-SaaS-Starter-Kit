@@ -16,18 +16,7 @@ export async function exportUserData(userId: string) {
           expiresAt: true,
         },
       },
-      webhooks: true,
       notifications: true,
-      ownedTeams: {
-        include: {
-          members: true,
-        },
-      },
-      teamMembers: {
-        include: {
-          team: true,
-        },
-      },
     },
   })
 
@@ -49,24 +38,15 @@ export async function exportUserData(userId: string) {
     take: 1000,
   })
 
-  // Get referrals
-  const referrals = await prisma.referral.findMany({
-    where: { referrerId: userId },
-  })
-
   // Audit the export
   await auditDataExport(userId, 'FULL_DATA_EXPORT')
 
   // Compile data export
   const exportData = {
     exportDate: new Date().toISOString(),
-    user: {
-      ...user,
-      twoFactorSecret: undefined, // Don't export sensitive data
-    },
+    user,
     usageRecords,
     activityLogs,
-    referrals,
   }
 
   return exportData
@@ -80,9 +60,6 @@ export async function deleteUserData(userId: string) {
     // Delete API keys
     prisma.apiKey.deleteMany({ where: { userId } }),
 
-    // Delete webhooks
-    prisma.webhook.deleteMany({ where: { userId } }),
-
     // Delete notifications
     prisma.notification.deleteMany({ where: { userId } }),
 
@@ -95,13 +72,7 @@ export async function deleteUserData(userId: string) {
     // Delete uploads
     prisma.upload.deleteMany({ where: { userId } }),
 
-    // Delete referrals
-    prisma.referral.deleteMany({ where: { referrerId: userId } }),
-
-    // Delete team memberships (not owned teams)
-    prisma.teamMember.deleteMany({ where: { userId } }),
-
-    // Finally delete the user (this will cascade to accounts, sessions, owned teams)
+    // Finally delete the user (this will cascade to accounts, sessions)
     prisma.user.delete({ where: { id: userId } }),
   ])
 

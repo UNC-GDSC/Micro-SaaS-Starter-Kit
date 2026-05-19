@@ -25,7 +25,7 @@ export function Navbar() {
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center">
             <Link href="/" className="text-xl font-bold">
-              {process.env.NEXT_PUBLIC_APP_NAME || 'Micro SaaS'}
+              {process.env.NEXT_PUBLIC_APP_NAME || 'ResumeAI'}
             </Link>
             <div className="hidden md:block">
               <div className="ml-10 flex items-baseline space-x-4">

@@ -26,10 +26,6 @@ export default function ApiKeysPage() {
   const [isCreating, setIsCreating] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  useEffect(() => {
-    fetchApiKeys()
-  }, [])
-
   const fetchApiKeys = async () => {
     try {
       const response = await fetch('/api/keys')
@@ -41,6 +37,10 @@ export default function ApiKeysPage() {
       setIsLoading(false)
     }
   }
+
+  useEffect(() => {
+    void fetchApiKeys()
+  }, [])
 
   const createApiKey = async () => {
     setIsCreating(true)
@@ -120,7 +120,7 @@ export default function ApiKeysPage() {
                     <DialogHeader>
                       <DialogTitle>API Key Created</DialogTitle>
                       <DialogDescription>
-                        Make sure to copy your API key now. You won't be able to see it again!
+                        Make sure to copy your API key now. You won&apos;t be able to see it again!
                       </DialogDescription>
                     </DialogHeader>
                     <div className="my-4">

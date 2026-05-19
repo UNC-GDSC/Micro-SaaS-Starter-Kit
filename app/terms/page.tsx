@@ -30,7 +30,7 @@ export default function TermsPage() {
             <section className="mt-8">
               <h2 className="text-2xl font-semibold mb-4">3. Disclaimer</h2>
               <p>
-                The materials on our service are provided on an 'as is' basis. We make no
+                The materials on our service are provided on an &apos;as is&apos; basis. We make no
                 warranties, expressed or implied, and hereby disclaim and negate all other
                 warranties including, without limitation, implied warranties or conditions of
                 merchantability, fitness for a particular purpose, or non-infringement of

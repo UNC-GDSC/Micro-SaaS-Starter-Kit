@@ -1,0 +1,283 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: production
+  cancel-in-progress: false   # never cancel a running deploy
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+
+jobs:
+  # ── 1. Quality gate ──────────────────────────────────────────────────────────
+  test:
+    name: Test & type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Unit tests
+        run: npm run test:ci
+
+      - name: Prisma schema validate
+        # No real DB needed — just checks schema syntax
+        run: |
+          DATABASE_URL=postgresql://x:x@localhost:5432/x \
+          npx prisma validate
+
+      - name: Next.js build check
+        # Runs next build outside Docker — errors appear here in plain text.
+        # Mirrors exactly what the Dockerfile does (same NODE_OPTIONS).
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          NODE_OPTIONS: '--max-old-space-size=3500'
+          # Stub required build-time vars so Next.js / Sentry don't abort
+          NEXT_PUBLIC_APP_URL: 'https://resumeai-bot.ru'
+          NEXT_PUBLIC_APP_NAME: 'ResumeAI'
+        run: npm run build
+
+  # ── 2. Build & push images to GHCR ──────────────────────────────────────────
+  build:
+    name: Build & push Docker images
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── web image ─────────────────────────────────────────────────────────
+      - name: Build & push web
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/resumeai-web:${{ github.sha }}
+            ghcr.io/${{ env.OWNER }}/resumeai-web:latest
+          cache-from: type=gha,scope=web
+          cache-to:   type=gha,scope=web,mode=max
+
+      # ── worker image ──────────────────────────────────────────────────────
+      - name: Build & push worker
+        uses: docker/build-push-action@v5
+        with:
+          context: ./worker
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/resumeai-worker:${{ github.sha }}
+            ghcr.io/${{ env.OWNER }}/resumeai-worker:latest
+          cache-from: type=gha,scope=worker
+          cache-to:   type=gha,scope=worker,mode=max
+
+  # ── 3. Deploy to VPS ─────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      packages: read   # allows github.token to pull images from GHCR on VPS
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1
+        env:
+          # Use the job's github.token for GHCR pull on VPS — no custom PAT needed.
+          GHCR_TOKEN: ${{ github.token }}
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          envs: GITHUB_SHA,GHCR_TOKEN
+          script: |
+            export IMAGE_TAG="${GITHUB_SHA}"
+            export OWNER="${{ env.OWNER }}"
+
+            # ── Auth ────────────────────────────────────────────────────────────
+            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin
+
+            # ── Free ports 80/443 — Caddy needs them ────────────────────────────
+            systemctl stop nginx 2>/dev/null || true
+            systemctl disable nginx 2>/dev/null || true
+
+            # ── Sync scripts from CI (always latest, never stale) ───────────────
+            mkdir -p /opt/resumeai/scripts
+
+            # smoke_test.sh — synced from repo so CSRF fix (and any future
+            # improvements) take effect without a manual VPS update
+            cat > /opt/resumeai/scripts/smoke_test.sh << 'SMOKE_EOF'
+            #!/usr/bin/env bash
+            # smoke_test.sh — post-deploy health checks.
+            set -euo pipefail
+            BASE_URL="${BASE_URL:-https://resumeai-bot.ru}"
+            ADMIN_WEBHOOK_URL="${ADMIN_WEBHOOK_URL:-}"
+            TIMEOUT=15
+            FAILED=0
+            log()  { echo "[$(date -u +%T)] $*"; }
+            fail() { echo "[$(date -u +%T)] FAILED: $*" >&2; FAILED=1; }
+            notify_failure() {
+              local msg="$1"
+              if [[ -n "$ADMIN_WEBHOOK_URL" ]]; then
+                curl -fsS --max-time 5 -X POST "$ADMIN_WEBHOOK_URL" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"text\":\"ResumeAI smoke test FAILED: ${msg}\"}" || true
+              fi
+            }
+            check() {
+              local label="$1" url="$2"
+              log "Checking ${label} -> ${url}"
+              if curl -fsS --max-time "$TIMEOUT" "$url" > /dev/null 2>&1; then
+                log "  OK ${label}"
+              else
+                fail "${label} failed (${url})"
+                notify_failure "${label} -- ${url}"
+              fi
+            }
+            check_status() {
+              local label="$1" url="$2" expected_pattern="${3:-^2}"
+              log "Checking ${label} -> ${url}"
+              local status
+              status=$(curl -sS --max-time "$TIMEOUT" -o /dev/null -w "%{http_code}" "$url" 2>/dev/null) || status="000"
+              if echo "$status" | grep -qE "$expected_pattern"; then
+                log "  OK ${label} (HTTP ${status})"
+              else
+                fail "${label} failed -- got HTTP ${status} (${url})"
+                notify_failure "${label} -- HTTP ${status} -- ${url}"
+              fi
+            }
+            check_body() {
+              local label="$1" url="$2" required="$3"
+              log "Checking ${label} -> ${url}"
+              local body
+              body=$(curl -sS --max-time "$TIMEOUT" "$url" 2>/dev/null) || body=""
+              if echo "$body" | grep -q "$required"; then
+                log "  OK ${label}"
+              else
+                fail "${label} failed -- body missing '${required}' (${url})"
+                notify_failure "${label} -- missing '${required}' -- ${url}"
+              fi
+            }
+            check "web /api/health"           "${BASE_URL}/api/health"
+            check "worker /api/worker/health" "${BASE_URL}/api/worker/health"
+            check_body "NextAuth CSRF"        "${BASE_URL}/api/auth/csrf"       "csrfToken"
+            check_status "login page"         "${BASE_URL}/login"               "^2"
+            check_body "OAuth providers"      "${BASE_URL}/api/auth/providers"  "google"
+            log "Checking auth sign-in initiation"
+            CSRF_TOKEN=$(curl -sS --max-time "$TIMEOUT" "${BASE_URL}/api/auth/csrf" 2>/dev/null \
+              | grep -o '"csrfToken":"[^"]*"' | cut -d'"' -f4) || CSRF_TOKEN=""
+            if [[ -z "$CSRF_TOKEN" ]]; then
+              log "  WARNING: auth sign-in check skipped -- could not obtain CSRF token"
+            else
+              SIGNIN_LOCATION=$(curl -sS --max-time "$TIMEOUT" -X POST \
+                -H "Content-Type: application/x-www-form-urlencoded" \
+                -d "csrfToken=${CSRF_TOKEN}" \
+                -o /dev/null -w "%{redirect_url}" \
+                "${BASE_URL}/api/auth/signin/google" 2>/dev/null) || SIGNIN_LOCATION=""
+              if echo "$SIGNIN_LOCATION" | grep -q "accounts.google.com"; then
+                log "  OK auth sign-in (redirects to Google)"
+              elif echo "$SIGNIN_LOCATION" | grep -q "error="; then
+                fail "auth sign-in BROKEN -- redirects to '${SIGNIN_LOCATION}' instead of Google"
+                notify_failure "OAuth sign-in broken -- ${SIGNIN_LOCATION}"
+              else
+                log "  WARNING: auth sign-in redirect unclear (${SIGNIN_LOCATION:-no redirect})"
+              fi
+            fi
+            if [[ "$FAILED" -ne 0 ]]; then
+              log "Smoke tests FAILED -- check container logs"
+              exit 1
+            fi
+            log "All smoke tests passed"
+            SMOKE_EOF
+            chmod +x /opt/resumeai/scripts/smoke_test.sh
+
+            cat > /opt/resumeai/scripts/deploy.sh << 'DEPLOY_EOF'
+            #!/usr/bin/env bash
+            set -euo pipefail
+            DEPLOY_DIR="${DEPLOY_DIR:-/opt/resumeai}"
+            REGISTRY="ghcr.io"
+            IMAGE_TAG="${IMAGE_TAG:-latest}"
+            OWNER="${OWNER:-maksimabramov105-dotcom}"
+            WEB_IMAGE="${REGISTRY}/${OWNER}/resumeai-web:${IMAGE_TAG}"
+            WORKER_IMAGE="${REGISTRY}/${OWNER}/resumeai-worker:${IMAGE_TAG}"
+            log() { echo "[$(date -u +%T)] $*"; }
+            log "Deploying tag=${IMAGE_TAG}"
+            cd "$DEPLOY_DIR"
+
+            # ── Disk helper ──────────────────────────────────────────────────────
+            avail_kb() { df / | awk 'NR==2 {print $4}'; }
+            avail_gb() { echo "scale=1; $(avail_kb)/1048576" | bc; }
+
+            # ── Disk guard: always prune ALL unused images (not just dangling) ───
+            # Multiple failed deploys accumulate tagged images that -f alone misses.
+            log "Disk: $(avail_gb)G free before pull"
+            log "Pruning unused images (including old tagged builds)..."
+            docker image prune -a -f 2>/dev/null || docker image prune -f 2>/dev/null || true
+            log "Disk after pre-pull prune: $(avail_gb)G free"
+            if [ "$(avail_kb)" -lt 2097152 ]; then
+              log "FATAL: still less than 2 GB free ($(avail_gb)G) after prune. Aborting."
+              exit 1
+            fi
+
+            log "Pulling images..."
+            WEB_IMAGE="$WEB_IMAGE" WORKER_IMAGE="$WORKER_IMAGE" docker compose pull web worker
+            log "Restarting services..."
+            WEB_IMAGE="$WEB_IMAGE" WORKER_IMAGE="$WORKER_IMAGE" docker compose up -d --remove-orphans --no-build
+            log "Running Prisma migrations..."
+            docker compose exec -T web node node_modules/prisma/build/index.js migrate deploy
+            log "Waiting for web container to become healthy (max 90s)..."
+            for i in $(seq 1 18); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' resumeai-web 2>/dev/null || echo "unknown")
+              if [ "$STATUS" = "healthy" ]; then
+                log "  web is healthy after ~$((i*5))s"
+                break
+              fi
+              log "  t=$((i*5))s — status: ${STATUS}"
+              sleep 5
+            done
+            # Show container state for CI debugging
+            docker compose ps
+            log "Running smoke tests..."
+            bash "${DEPLOY_DIR}/scripts/smoke_test.sh"
+            # ── Post-deploy cleanup: prune ALL unused images ─────────────────────
+            log "Pruning unused images to reclaim disk..."
+            docker image prune -a -f 2>/dev/null || docker image prune -f 2>/dev/null || true
+            log "Disk after cleanup: $(avail_gb)G free"
+
+            log "Deploy complete — tag=${IMAGE_TAG}"
+            DEPLOY_EOF
+            chmod +x /opt/resumeai/scripts/deploy.sh
+
+            bash /opt/resumeai/scripts/deploy.sh
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ Deployed ${{ github.sha }} to production"

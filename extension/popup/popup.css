@@ -1,0 +1,104 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: #1e293b;
+  background: #fff;
+  width: 280px;
+  min-height: 120px;
+}
+
+.container { padding: 14px 16px 16px; }
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.logo  { font-size: 18px; line-height: 1; }
+.title { font-size: 14px; font-weight: 700; color: #0f172a; }
+
+/* States */
+.state.hidden { display: none; }
+.state { display: block; }
+
+/* Resume info card */
+.resume-info {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.resume-name    { font-weight: 600; font-size: 13px; color: #0f172a; }
+.resume-title   { font-size: 12px; color: #64748b; margin-top: 2px; }
+.resume-missing { font-size: 12px; color: #94a3b8; font-style: italic; }
+
+/* Skeleton loader */
+.skeleton {
+  background: linear-gradient(90deg, #e2e8f0 25%, #cbd5e1 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 4px;
+  height: 12px;
+  margin-bottom: 6px;
+}
+.skeleton.short { width: 60%; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* Buttons */
+.btn {
+  display: block;
+  width: 100%;
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s;
+  text-align: center;
+}
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary  { background: #2563eb; color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+.btn-ghost    { background: transparent; color: #64748b; font-weight: 500; }
+.btn-ghost:hover { color: #ef4444; }
+
+/* Status message */
+.status {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: center;
+}
+.status.hidden   { display: none; }
+.status.success  { background: #dcfce7; color: #166534; }
+.status.error    { background: #fee2e2; color: #991b1b; }
+.status.info     { background: #dbeafe; color: #1e40af; }
+
+/* Misc */
+.msg     { font-size: 12px; color: #64748b; line-height: 1.5; margin-bottom: 12px; }
+.divider { border: none; border-top: 1px solid #e2e8f0; margin: 12px 0; }
+
+/* Full-screen spinner */
+.spinner-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px 0;
+}
+.spinner {
+  width: 22px; height: 22px;
+  border: 2.5px solid #e2e8f0;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

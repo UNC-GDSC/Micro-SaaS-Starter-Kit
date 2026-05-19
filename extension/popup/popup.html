@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ResumeAI Autofill</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <span class="logo">✨</span>
+      <span class="title">ResumeAI Autofill</span>
+    </header>
+
+    <!-- Not connected state -->
+    <div id="state-disconnected" class="state hidden">
+      <p class="msg">Connect to your ResumeAI account to start autofilling applications.</p>
+      <button id="btn-connect" class="btn btn-primary">Connect ResumeAI</button>
+    </div>
+
+    <!-- Connected state -->
+    <div id="state-connected" class="state hidden">
+      <div class="resume-info" id="resume-info">
+        <div class="skeleton skeleton-line"></div>
+        <div class="skeleton skeleton-line short"></div>
+      </div>
+      <button id="btn-autofill" class="btn btn-primary">
+        ✨ Autofill this page
+      </button>
+      <div id="fill-status" class="status hidden"></div>
+      <hr class="divider" />
+      <button id="btn-disconnect" class="btn btn-ghost">Disconnect</button>
+    </div>
+
+    <!-- Loading state -->
+    <div id="state-loading" class="state">
+      <div class="spinner-wrap">
+        <div class="spinner"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

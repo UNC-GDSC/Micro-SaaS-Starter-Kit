@@ -1,0 +1,62 @@
+{
+  "manifest_version": 3,
+  "name": "ResumeAI Autofill",
+  "short_name": "ResumeAI",
+  "version": "1.0.0",
+  "description": "Autofill job applications instantly using your ResumeAI resume.",
+
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["https://resumeai-bot.ru/*"],
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://resumeai-bot.ru/extension/connect*"],
+      "js": ["content/connect-bridge.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://boards.greenhouse.io/*",
+        "https://*.greenhouse.io/jobs/*",
+        "https://jobs.lever.co/*/*",
+        "https://apply.workable.com/*/*",
+        "https://jobs.smartrecruiters.com/*/*",
+        "https://jobs.jobvite.com/*/*",
+        "https://jobs.ashbyhq.com/*/*",
+        "https://www.linkedin.com/jobs/*",
+        "https://*.myworkdayjobs.com/*",
+        "https://*.icims.com/*",
+        "https://careers.*.com/apply*",
+        "https://*.taleo.net/*"
+      ],
+      "js": [
+        "content/detect.js",
+        "content/autofill.js",
+        "content/overlay.js"
+      ],
+      "css": ["content/overlay.css"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "ResumeAI Autofill",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

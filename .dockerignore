@@ -1,0 +1,39 @@
+# Node / Next.js build artefacts
+node_modules
+.next
+.npm
+
+# Python worker virtualenv / caches
+worker/.venv
+worker/__pycache__
+worker/**/__pycache__
+worker/.pytest_cache
+worker/.mypy_cache
+worker/*.egg-info
+
+# Secrets — never bake into images
+.env
+.env.local
+.env.production
+secrets/
+
+# Dev tooling
+.git
+.github
+.husky
+.vscode
+*.log
+
+# Test output
+coverage
+playwright-report
+test-results
+
+# Docs / notes (not needed at runtime)
+docs
+prisma/SCHEMA_NOTES.md
+_rebuild-plan
+
+# OS noise
+.DS_Store
+Thumbs.db

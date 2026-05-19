@@ -10,9 +10,9 @@ import swaggerJsdoc from 'swagger-jsdoc'
 const swaggerDefinition = {
   openapi: '3.0.0',
   info: {
-    title: 'Micro SaaS API',
+    title: 'ResumeAI API',
     version: '1.0.0',
-    description: 'Complete API documentation for the Micro SaaS platform',
+    description: 'Complete API documentation for the ResumeAI platform',
     contact: {
       name: 'API Support',
       email: 'support@example.com',

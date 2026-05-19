@@ -3,23 +3,22 @@ import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import { Providers } from './providers'
 import { Analytics } from '@vercel/analytics/react'
-import { SpeedInsights } from '@vercel/speed-insights/next'
 
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Micro SaaS Starter Kit',
-  description: 'Production-ready boilerplate for launching subscription-based web tools',
+  title: 'ResumeAI',
+  description: 'AI-generated resumes and automated job applications',
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'),
   openGraph: {
-    title: 'Micro SaaS Starter Kit',
-    description: 'Production-ready boilerplate for launching subscription-based web tools',
+    title: 'ResumeAI',
+    description: 'AI-generated resumes and automated job applications',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Micro SaaS Starter Kit',
-    description: 'Production-ready boilerplate for launching subscription-based web tools',
+    title: 'ResumeAI',
+    description: 'AI-generated resumes and automated job applications',
   },
 }
 
@@ -33,7 +32,6 @@ export default function RootLayout({
       <body className={inter.className}>
         <Providers>{children}</Providers>
         <Analytics />
-        <SpeedInsights />
       </body>
     </html>
   )

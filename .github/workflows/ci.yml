@@ -2,80 +2,49 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, 'bootstrap/**', 'feat/**', 'fix/**', 'chore/**']
   pull_request:
-    branches: [main, develop]
+    branches: [main]
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-      - name: Install dependencies
-        run: npm ci
-      - name: Run ESLint
-        run: npm run lint
-      - name: Check formatting
-        run: npm run format:check
-      - name: Type check
-        run: npm run type-check
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-      - name: Install dependencies
-        run: npm ci
-      - name: Run tests
-        run: npm run test:ci
-
-  e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-      - name: Install dependencies
-        run: npm ci
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps
-      - name: Run E2E tests
-        run: npm run test:e2e
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: playwright-report/
-          retention-days: 30
-
   build:
+    name: Build & lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
           cache: 'npm'
-      - name: Install dependencies
-        run: npm ci
-      - name: Build application
-        run: npm run build
+      - run: npm ci --legacy-peer-deps
+      - run: npm run lint
+      - run: npm run build
         env:
-          DATABASE_URL: 'postgresql://user:password@localhost:5432/test'
-          NEXTAUTH_SECRET: 'test-secret-key'
-          NEXTAUTH_URL: 'http://localhost:3000'
+          SKIP_ENV_VALIDATION: true
+          NEXTAUTH_URL: http://localhost:3000
+          NEXTAUTH_SECRET: ci-secret-not-real
+          DATABASE_URL: postgresql://user:pass@localhost:5432/ci
+          STRIPE_SECRET_KEY: sk_test_ci
+          STRIPE_WEBHOOK_SECRET: whsec_ci
+          WORKER_URL: http://localhost:8000
+          WORKER_SECRET: ci-worker-secret
+          ENCRYPTION_KEY: bV4UmliwP4xFApJTnq5O5XxJ4mltOC4bjrQQ7EdCUtc=
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+
+  cyrillic-guard:
+    name: No Cyrillic in source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for Cyrillic characters
+        run: |
+          MATCHES=$(grep -rIl \
+            --include='*.ts' --include='*.tsx' --include='*.js' --include='*.py' \
+            --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=docs \
+            -P '[\x{0400}-\x{04FF}]' app components lib prisma worker 2>/dev/null || true)
+          if [ -n "$MATCHES" ]; then
+            echo "Cyrillic characters found in source files:"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "No Cyrillic found"

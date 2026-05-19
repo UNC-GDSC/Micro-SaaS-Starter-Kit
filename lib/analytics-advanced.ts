@@ -112,7 +112,7 @@ export async function analyzeFunnel(params: {
 }) {
   const { events, startDate, endDate } = params
 
-  const results = []
+  const results: Array<{ step: number; event: string; count: number; conversionRate: number; dropOff: number; dropOffRate: number }> = []
 
   for (let i = 0; i < events.length; i++) {
     const event = events[i]

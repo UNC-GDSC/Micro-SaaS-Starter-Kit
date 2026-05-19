@@ -1,0 +1,25 @@
+name: Daily digest emails
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # every hour on the hour, UTC
+  workflow_dispatch:        # manual trigger for testing
+
+jobs:
+  send:
+    name: Trigger digest cron
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call daily-digest cron endpoint
+        run: |
+          HTTP_STATUS=$(curl -s -o /tmp/body.txt -w "%{http_code}" \
+            -X POST "https://resumeai-bot.ru/api/cron/daily-digest" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json")
+          BODY=$(cat /tmp/body.txt)
+          echo "Status : $HTTP_STATUS"
+          echo "Response: $BODY"
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "::error::Cron returned HTTP $HTTP_STATUS: $BODY"
+            exit 1
+          fi

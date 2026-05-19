@@ -1,11 +1,18 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Include Alpine/musl (x86_64 + ARM64) engines so Docker builds work.
+  // "native" covers macOS dev; the musl targets cover node:20-alpine (openssl 3).
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+// ---------------------------------------------------------------------------
+// Auth / Identity (NextAuth.js)
+// ---------------------------------------------------------------------------
 
 model Account {
   id                String  @id @default(cuid())
@@ -43,37 +50,65 @@ model User {
   accounts      Account[]
   sessions      Session[]
   apiKeys       ApiKey[]
-  webhooks      Webhook[]
   notifications Notification[]
-  ownedTeams    Team[]    @relation("TeamOwner")
-  teamMembers   TeamMember[]
-  invitedBy     String?
-  referralCode  String?   @unique
 
+  // Stripe billing
   stripeCustomerId       String?   @unique
   stripeSubscriptionId   String?   @unique
   stripePriceId          String?
   stripeCurrentPeriodEnd DateTime?
 
-  role          String    @default("user")
-  permissions   String[]  @default(["read"])
-  onboarded     Boolean   @default(false)
-  onboardingStep Int      @default(0)
-  usageCount    Int       @default(0)
-  usageLimit    Int       @default(1000)
-  credits       Int       @default(0)
-  lastActiveAt  DateTime  @default(now())
+  // Roles & permissions
+  role        String   @default("user")
+  permissions String[] @default(["read"])
 
-  twoFactorEnabled Boolean @default(false)
-  twoFactorSecret  String?
+  // Onboarding
+  onboarded     Boolean @default(false)
+  onboardingStep Int    @default(0)
 
-  preferences   Json?
+  // Usage / credits
+  usageCount            Int @default(0)
+  usageLimit            Int @default(1000)
+  credits               Int @default(0)
+  dailyApplicationLimit Int @default(3) // overridden per-plan in lib/subscription.ts
+
+  // Preferences
+  lastActiveAt DateTime @default(now())
+  preferences  Json?
+
+  // Migration helpers
+  legacyId         Int?    @unique    // legacy: bot.db.users.telegram_id + autoapply.db.autoapply_users.telegram_id
+  telegramUsername String?            // legacy: bot.db.users.username
+
+  // PMF tracking
+  firstPaidAt  DateTime?  // set once on first successful checkout; used for day-30 survey + cohort retention
+  cancelledAt  DateTime?  // set when subscription deleted; used for churn rate + exit-reason histogram
+  refundReason String?    // exit-reason captured in cancellation flow; one of the enum values in lib/pmf/types.ts
+  refundedAt   DateTime?  // set when a refund is issued; guards the one-refund-per-customer rule
+
+  // Notification preferences
+  dailyDigestEnabled Boolean @default(true)  // opt-out of daily activity digest email
+  timezone           String  @default("UTC") // IANA timezone (e.g. "Europe/Moscow") for sending digest at 8am local
+
+  // Job-email inbox (Prompt 22)
+  inboxHandle   String?       @unique        // forwarding alias, e.g. "alex-7g3k" → alex-7g3k@inbox.resumeai-bot.ru
+  inboxMessages InboxMessage[]
+
+  // Resume domain relations
+  resumes      Resume[]
+  applications JobApplication[]
+  campaigns    AutoApplyCampaign[]
+  surveys      Survey[]
+
+  // Telegram notification (Prompt 18)
+  telegramChat  TelegramChat?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([email])
-  @@index([referralCode])
+  @@index([firstPaidAt])
+  @@index([cancelledAt])
 }
 
 model VerificationToken {
@@ -84,32 +119,48 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
+// ---------------------------------------------------------------------------
+// API Keys
+// ---------------------------------------------------------------------------
+
 model ApiKey {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   name      String
-  key       String   @unique
+  key       String    @unique
+  scope     String?   // e.g. "extension" — null means general-purpose key
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   lastUsed  DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
   expiresAt DateTime?
 
   @@index([userId])
+  @@index([scope])
 }
 
-model Webhook {
+// ---------------------------------------------------------------------------
+// Telegram Notifications (Prompt 18)
+// ---------------------------------------------------------------------------
+
+model TelegramChat {
   id          String   @id @default(cuid())
-  url         String
-  events      String[]
-  secret      String
-  enabled     Boolean  @default(true)
-  userId      String
+  userId      String   @unique
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  lastTriggered DateTime?
-  createdAt   DateTime @default(now())
+  chatId      String                  // Telegram chat_id (numeric, stored as string)
+  username    String?                 // @username if available
+  connectedAt DateTime @default(now())
 
-  @@index([userId])
+  // Per-type notification toggles (user can opt out individually)
+  notifyOnSubmit         Boolean @default(true)
+  notifyOnInterviewReply Boolean @default(true)
+  notifyOnLinkedInIssue  Boolean @default(true)
+
+  @@index([chatId])
 }
+
+// ---------------------------------------------------------------------------
+// Observability
+// ---------------------------------------------------------------------------
 
 model ActivityLog {
   id        String   @id @default(cuid())
@@ -124,57 +175,47 @@ model ActivityLog {
   @@index([createdAt])
 }
 
-model Team {
-  id          String       @id @default(cuid())
-  name        String
-  slug        String       @unique
-  logo        String?
-  ownerId     String
-  owner       User         @relation("TeamOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  members     TeamMember[]
-  invites     TeamInvite[]
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  teamId     String?
+  action     String
+  resource   String
+  resourceId String?
+  changes    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
 
-  stripeCustomerId       String?   @unique
-  stripeSubscriptionId   String?   @unique
-  stripePriceId          String?
-  stripeCurrentPeriodEnd DateTime?
-
-  settings    Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([ownerId])
-  @@index([slug])
-}
-
-model TeamMember {
-  id        String   @id @default(cuid())
-  teamId    String
-  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role      String   @default("member")
-  permissions String[] @default(["read"])
-  createdAt DateTime @default(now())
-
-  @@unique([teamId, userId])
-  @@index([teamId])
   @@index([userId])
+  @@index([teamId])
+  @@index([resource, resourceId])
+  @@index([createdAt])
 }
 
-model TeamInvite {
+model AnalyticsEvent {
   id        String   @id @default(cuid())
-  teamId    String
-  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  email     String
-  role      String   @default("member")
-  token     String   @unique
-  expiresAt DateTime
+  userId    String?
+  sessionId String?
+  event     String
+  properties Json?
+  page      String?
+  referrer  String?
+  userAgent String?
+  ipAddress String?
+  country   String?
+  city      String?
   createdAt DateTime @default(now())
 
-  @@index([teamId])
-  @@index([email])
+  @@index([userId])
+  @@index([sessionId])
+  @@index([event])
+  @@index([createdAt])
 }
+
+// ---------------------------------------------------------------------------
+// Notifications & Uploads
+// ---------------------------------------------------------------------------
 
 model Notification {
   id        String   @id @default(cuid())
@@ -192,34 +233,6 @@ model Notification {
   @@index([createdAt])
 }
 
-model FeatureFlag {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  description String?
-  enabled     Boolean  @default(false)
-  rolloutPercentage Int @default(0)
-  conditions  Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([name])
-}
-
-model Referral {
-  id            String   @id @default(cuid())
-  referrerId    String
-  referredEmail String?
-  referredId    String?
-  status        String   @default("pending")
-  reward        Int      @default(0)
-  metadata      Json?
-  createdAt     DateTime @default(now())
-  completedAt   DateTime?
-
-  @@index([referrerId])
-  @@index([referredId])
-}
-
 model Upload {
   id        String   @id @default(cuid())
   userId    String
@@ -234,6 +247,10 @@ model Upload {
   @@index([userId])
   @@index([key])
 }
+
+// ---------------------------------------------------------------------------
+// Billing
+// ---------------------------------------------------------------------------
 
 model UsageRecord {
   id        String   @id @default(cuid())
@@ -250,40 +267,22 @@ model UsageRecord {
   @@index([createdAt])
 }
 
-model AuditLog {
-  id          String   @id @default(cuid())
-  userId      String?
-  teamId      String?
-  action      String
-  resource    String
-  resourceId  String?
-  changes     Json?
-  ipAddress   String?
-  userAgent   String?
-  createdAt   DateTime @default(now())
-
-  @@index([userId])
-  @@index([teamId])
-  @@index([resource, resourceId])
-  @@index([createdAt])
-}
-
 model Invoice {
-  id            String   @id @default(cuid())
-  userId        String
-  teamId        String?
-  invoiceNumber String   @unique
-  stripeInvoiceId String? @unique
-  status        String   @default("draft")
-  amount        Int
-  currency      String   @default("usd")
-  tax           Int      @default(0)
-  items         Json
-  paidAt        DateTime?
-  dueDate       DateTime?
-  metadata      Json?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id              String    @id @default(cuid())
+  userId          String
+  teamId          String?
+  invoiceNumber   String    @unique
+  stripeInvoiceId String?   @unique
+  status          String    @default("draft")
+  amount          Int
+  currency        String    @default("usd")
+  tax             Int       @default(0)
+  items           Json
+  paidAt          DateTime?
+  dueDate         DateTime?
+  metadata        Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([userId])
   @@index([teamId])
@@ -291,96 +290,9 @@ model Invoice {
   @@index([createdAt])
 }
 
-model SupportTicket {
-  id          String   @id @default(cuid())
-  userId      String
-  subject     String
-  description String   @db.Text
-  status      String   @default("open")
-  priority    String   @default("medium")
-  category    String?
-  assignedTo  String?
-  messages    SupportMessage[]
-  metadata    Json?
-  closedAt    DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([userId])
-  @@index([status])
-  @@index([priority])
-  @@index([createdAt])
-}
-
-model SupportMessage {
-  id        String   @id @default(cuid())
-  ticketId  String
-  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  userId    String
-  message   String   @db.Text
-  isStaff   Boolean  @default(false)
-  attachments Json?
-  createdAt DateTime @default(now())
-
-  @@index([ticketId])
-  @@index([userId])
-  @@index([createdAt])
-}
-
-model OnboardingStep {
-  id          String   @id @default(cuid())
-  userId      String
-  step        String
-  completed   Boolean  @default(false)
-  data        Json?
-  completedAt DateTime?
-  createdAt   DateTime @default(now())
-
-  @@unique([userId, step])
-  @@index([userId])
-  @@index([completed])
-}
-
-model AnalyticsEvent {
-  id         String   @id @default(cuid())
-  userId     String?
-  sessionId  String?
-  event      String
-  properties Json?
-  page       String?
-  referrer   String?
-  userAgent  String?
-  ipAddress  String?
-  country    String?
-  city       String?
-  createdAt  DateTime @default(now())
-
-  @@index([userId])
-  @@index([sessionId])
-  @@index([event])
-  @@index([createdAt])
-}
-
-model Feedback {
-  id        String   @id @default(cuid())
-  userId    String?
-  type      String   @default("feature")
-  title     String
-  description String @db.Text
-  status    String   @default("under_review")
-  votes     Int      @default(0)
-  voters    String[] @default([])
-  category  String?
-  metadata  Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@index([type])
-  @@index([status])
-  @@index([votes])
-  @@index([createdAt])
-}
+// ---------------------------------------------------------------------------
+// Compliance
+// ---------------------------------------------------------------------------
 
 model Consent {
   id        String   @id @default(cuid())
@@ -426,21 +338,235 @@ model LoginAttempt {
 }
 
 model DeviceSession {
-  id          String   @id @default(cuid())
-  userId      String
-  deviceId    String
-  deviceName  String?
-  deviceType  String?
-  browser     String?
-  os          String?
-  ipAddress   String
-  location    String?
-  lastActive  DateTime @default(now())
-  trusted     Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  userId     String
+  deviceId   String
+  deviceName String?
+  deviceType String?
+  browser    String?
+  os         String?
+  ipAddress  String
+  location   String?
+  lastActive DateTime @default(now())
+  trusted    Boolean  @default(false)
+  createdAt  DateTime @default(now())
 
   @@unique([userId, deviceId])
   @@index([userId])
   @@index([deviceId])
   @@index([lastActive])
+}
+
+// ---------------------------------------------------------------------------
+// Resume domain
+// ---------------------------------------------------------------------------
+
+model Resume {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String                  // e.g. "Backend Engineer — 2026"
+  targetRole  String?                 // user's target job title
+  input       Json                    // raw form input
+  generated   Json                    // AI-structured resume content
+  pdfUrl      String?                 // optional S3/disk URL
+  language    String   @default("en")
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  applications JobApplication[]
+  campaigns    AutoApplyCampaign[]
+
+  @@index([userId])
+  @@index([userId, isDefault])
+}
+
+model JobApplication {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeId    String?
+  resume      Resume?   @relation(fields: [resumeId], references: [id])
+  campaignId  String?
+  campaign    AutoApplyCampaign? @relation(fields: [campaignId], references: [id])
+
+  source      JobSource
+  jobTitle    String                   // legacy: autoapply.db.applications.vacancy_title
+  company     String                   // legacy: autoapply.db.applications.company_name
+  location    String?
+  jobUrl      String                   // legacy: autoapply.db.applications.vacancy_url
+  vacancyId   String?                  // legacy: autoapply.db.applications.vacancy_id (external platform ID)
+  status      ApplicationStatus @default(QUEUED) // legacy: autoapply.db.applications.status
+  coverLetter  String?  @db.Text
+  errorMessage String?  @db.Text
+  appliedAt   DateTime?                // legacy: autoapply.db.applications.sent_at
+  responseAt  DateTime?                // legacy: autoapply.db.applications.response_at
+
+  // Per-application AI tailoring (Prompt 19)
+  tailoredResume      Json?           // tailored version of resume.generated submitted to ATS
+  tailoredCoverLetter String?  @db.Text  // per-job cover letter generated at submit time
+  tailoringTokensUsed Int?            // total tokens consumed (resume + cover) for cost tracking
+  tailoringModelUsed  String?         // e.g. "gpt-4o-mini"
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  events        ApplicationEvent[]
+  inboxMessages InboxMessage[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([campaignId])
+}
+
+model ApplicationEvent {
+  id            String         @id @default(cuid())
+  applicationId String
+  application   JobApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  type          String         // submitted, viewed, interview_requested, rejected, offer, etc.
+  payload       Json?
+  createdAt     DateTime       @default(now())
+
+  @@index([applicationId])
+  @@index([createdAt])
+}
+
+model AutoApplyCampaign {
+  id      String @id @default(cuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeId String
+  resume  Resume @relation(fields: [resumeId], references: [id])
+
+  name    String
+  source  JobSource        // LINKEDIN or CAREEROPS (legacy: autoapply.db.campaigns.platforms)
+  isActive Boolean @default(true) // legacy: autoapply.db.campaigns.status
+
+  // Search parameters
+  keywords         String[]
+  locations        String[]           // legacy: autoapply.db.campaigns.location
+  excludeCompanies String[]           // user's blocklist
+  salaryMin        Int?               // legacy: autoapply.db.campaigns.salary_min
+  experience       String?            // legacy: autoapply.db.campaigns.experience (e.g. "1-3 years")
+
+  // Throttling
+  dailyLimit     Int      // copied from plan tier at creation; legacy: autoapply.db.campaigns.daily_limit
+  totalSent      Int      @default(0) // legacy: autoapply.db.campaigns.applications_sent
+  responsesCount Int      @default(0) // legacy: autoapply.db.campaigns.responses
+  lastRunAt      DateTime?            // legacy: autoapply.db.campaigns.last_run
+
+  // LinkedIn credentials — Fernet-encrypted with ENCRYPTION_KEY.
+  // Lives here (not on User) because one user can run multiple campaigns
+  // with different LinkedIn accounts.  See prisma/SCHEMA_NOTES.md.
+  linkedinEmail       String?          // legacy: autoapply.db.autoapply_users.linkedin_email
+  linkedinPasswordEnc String?          // legacy: autoapply.db.autoapply_users.linkedin_password_enc
+
+  // HeadHunter (hh.ru) OAuth — Russia/CIS job market
+  hhToken    String?                  // legacy: autoapply.db.autoapply_users.hh_token
+  hhResumeId String?                  // legacy: autoapply.db.autoapply_users.hh_resume_id
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  applications JobApplication[]
+
+  @@index([userId])
+  @@index([isActive])
+}
+
+// Cached job listings scraped from external sources.
+// Maps from autoapply.db.vacancies_cache.
+model JobListing {
+  id          String    @id @default(cuid())
+  externalId  String                        // legacy: autoapply.db.vacancies_cache.vacancy_id
+  source      JobSource                     // legacy: autoapply.db.vacancies_cache.platform
+  title       String
+  company     String
+  location    String?
+  remote      Boolean   @default(false)
+  salary      String?                       // legacy: autoapply.db.vacancies_cache.salary (free-form text)
+  description String    @db.Text
+  url         String
+  postedAt    DateTime?
+  scrapedAt   DateTime  @default(now())
+  applied     Boolean   @default(false)     // legacy: autoapply.db.vacancies_cache.applied
+
+  @@unique([source, externalId])
+  @@index([source])
+  @@index([scrapedAt])
+}
+
+// ---------------------------------------------------------------------------
+// PMF — Surveys
+// ---------------------------------------------------------------------------
+
+model Survey {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type         String                           // "interview_day30"
+  scheduledFor DateTime
+  shownAt      DateTime?                        // set when modal first displayed
+  answeredAt   DateTime?                        // set when user submits an answer
+  response     Json?                            // { answer: "yes"|"no"|"not_sure", interviewCount?: number }
+
+  @@index([userId, type])
+  @@index([scheduledFor, shownAt])
+}
+
+// ---------------------------------------------------------------------------
+// Job-email inbox (Prompt 22)
+// ---------------------------------------------------------------------------
+
+enum InboxClass {
+  INTERVIEW_REQUEST
+  REJECTION
+  QUESTION
+  AUTOMATED
+  OTHER
+  UNCLASSIFIED
+}
+
+model InboxMessage {
+  id             String          @id @default(cuid())
+  userId         String
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applicationId  String?
+  application    JobApplication? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  fromEmail      String
+  fromName       String?
+  subject        String
+  bodyText       String          @db.Text
+  bodyHtml       String?         @db.Text
+  classification InboxClass      @default(UNCLASSIFIED)
+  receivedAt     DateTime        @default(now())
+  isRead         Boolean         @default(false)
+
+  @@index([userId, receivedAt])
+  @@index([applicationId])
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum JobSource {
+  LINKEDIN
+  CAREEROPS
+  ADZUNA
+  ARBEITNOW
+  REMOTEOK
+  THEMUSE
+  MANUAL
+}
+
+enum ApplicationStatus {
+  QUEUED
+  SUBMITTED
+  FAILED
+  INTERVIEW
+  REJECTED
+  OFFER
+  WITHDRAWN
 }

@@ -37,5 +37,5 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# prisma
-prisma/migrations
+# prisma — migrations are source code and must be committed
+# prisma/migrations  (intentionally not ignored)

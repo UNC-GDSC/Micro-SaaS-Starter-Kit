@@ -1,0 +1,23 @@
+/*
+ * overlay.css — Minimal host-element styles for the Shadow DOM overlay.
+ *
+ * The bulk of the button styling lives inside overlay.js (injected <style>
+ * in the shadow root). This file only styles the host element itself so
+ * Chrome applies it via the manifest content_scripts.css declaration.
+ *
+ * We keep this intentionally minimal — an empty stylesheet would still be
+ * listed in manifest.json for clarity (future host-level overrides).
+ */
+
+/* Keep the host element invisible in the normal document flow */
+#resumeai-overlay-host {
+  all: unset;
+  display: block;
+  position: fixed;
+  bottom: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+}

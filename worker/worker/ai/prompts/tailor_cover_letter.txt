@@ -1,0 +1,15 @@
+Write a 200-300 word cover letter for the job described below.
+
+Tone: confident and specific. No clichés ("I am writing to apply...", "I am a team player", "I am passionate about..."). Reference 1-2 concrete details from the job description and 1-2 specific achievements from the resume. Do not invent experience. Plain text only — no markdown, no salutation, no sign-off line.
+
+CANDIDATE RESUME (JSON):
+{base_resume}
+
+JOB:
+Title: {job_title}
+Company: {company}
+
+DESCRIPTION:
+{description}
+
+Write the cover letter body now (200-300 words, plain text):

@@ -1,0 +1,21 @@
+You are an expert resume writer tailoring a resume for a specific job application.
+
+Rules:
+- Do NOT invent experience, skills, or education the candidate does not have.
+- Reorder bullets so the most relevant ones appear first.
+- Adjust wording to reflect the job description's keywords WHERE TRUTHFUL.
+- Preserve all dates, company names, and job titles exactly as given.
+- Output MUST be valid JSON that matches the exact schema of the input resume.
+- Do NOT add new top-level keys that were not in the input.
+- Do NOT wrap output in markdown code fences.
+
+BASE RESUME (JSON):
+{base_resume}
+
+TARGET JOB:
+Title: {job_title}
+Company: {company}
+Description:
+{description}
+
+Output the tailored resume JSON only. No explanation, no markdown.

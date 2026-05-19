@@ -1,0 +1,24 @@
+name: Seed daily surveys
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # 09:00 UTC every day
+  workflow_dispatch:        # allow manual trigger from GitHub UI
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger seed-surveys cron
+        run: |
+          HTTP_STATUS=$(curl -s -o /tmp/body.txt -w "%{http_code}" \
+            -X POST "https://resumeai-bot.ru/api/cron/seed-surveys" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json")
+          BODY=$(cat /tmp/body.txt)
+          echo "Status: $HTTP_STATUS"
+          echo "Body: $BODY"
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "::error::Cron returned HTTP $HTTP_STATUS: $BODY"
+            exit 1
+          fi

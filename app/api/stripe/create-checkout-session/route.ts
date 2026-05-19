@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { getStripeSession } from '@/lib/stripe'
 import { prisma } from '@/lib/prisma'
+import { getPlanById } from '@/lib/pricing'
 
 export async function POST(req: Request) {
   try {
@@ -12,10 +13,23 @@ export async function POST(req: Request) {
       return new NextResponse('Unauthorized', { status: 401 })
     }
 
-    const { priceId } = await req.json()
+    const body = await req.json()
+
+    // Accept planId (preferred) or legacy priceId.
+    // Price IDs are server-only env vars — never bundled into the client,
+    // so the client sends a plan slug and we resolve the price ID here.
+    let priceId: string | null = body.priceId ?? null
+
+    if (body.planId) {
+      const plan = getPlanById(body.planId)
+      priceId = plan.priceId ?? null
+    }
 
     if (!priceId) {
-      return new NextResponse('Price ID is required', { status: 400 })
+      return new NextResponse(
+        'This plan is not available for purchase. Stripe price ID is not configured on the server.',
+        { status: 400 }
+      )
     }
 
     const user = await prisma.user.findUnique({
@@ -30,8 +44,9 @@ export async function POST(req: Request) {
     })
 
     return NextResponse.json({ url: checkoutSession.url })
-  } catch (error: any) {
-    console.error('Error creating checkout session:', error)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('Error creating checkout session:', message)
     return new NextResponse('Internal Server Error', { status: 500 })
   }
 }

@@ -1,4 +1,4 @@
-# Contributing to Micro SaaS Starter Kit
+# Contributing to ResumeAI
 
 Thank you for your interest in contributing!
 

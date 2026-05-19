@@ -28,7 +28,7 @@ export async function POST(req: Request) {
       return new NextResponse('Unauthorized', { status: 401 })
     }
 
-    const { name, expiresAt } = await req.json()
+    const { name, expiresAt, scope } = await req.json()
 
     if (!name) {
       return new NextResponse('Name is required', { status: 400 })
@@ -37,13 +37,15 @@ export async function POST(req: Request) {
     const { apiKey, rawKey } = await generateApiKey(
       session.user.id,
       name,
-      expiresAt ? new Date(expiresAt) : undefined
+      expiresAt ? new Date(expiresAt) : undefined,
+      scope ?? undefined,
     )
 
     return NextResponse.json({
       apiKey: {
         id: apiKey.id,
         name: apiKey.name,
+        scope: apiKey.scope,
         createdAt: apiKey.createdAt,
         expiresAt: apiKey.expiresAt,
       },

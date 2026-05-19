@@ -1,6 +1,12 @@
 import { Resend } from 'resend'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+// Lazy singleton — avoids throwing at module-load time when RESEND_API_KEY
+// is not set (e.g. during Next.js build-time static analysis or CI).
+let _resend: Resend | null = null
+function getResend(): Resend {
+  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
+  return _resend
+}
 
 interface EmailOptions {
   to: string
@@ -9,6 +15,7 @@ interface EmailOptions {
 }
 
 export async function sendEmail({ to, subject, html }: EmailOptions) {
+  const resend = getResend()
   try {
     const data = await resend.emails.send({
       from: process.env.EMAIL_FROM || 'onboarding@resend.dev',

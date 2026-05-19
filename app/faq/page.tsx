@@ -84,7 +84,7 @@ export default function FaqPage() {
             <CardHeader>
               <CardTitle>Still have questions?</CardTitle>
               <CardDescription>
-                Can't find the answer you're looking for? Contact our support team.
+                Can&apos;t find the answer you&apos;re looking for? Contact our support team.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -93,7 +93,7 @@ export default function FaqPage() {
                 <a href="mailto:support@example.com" className="text-primary underline">
                   support@example.com
                 </a>{' '}
-                and we'll get back to you as soon as possible.
+                and we&apos;ll get back to you as soon as possible.
               </p>
             </CardContent>
           </Card>
